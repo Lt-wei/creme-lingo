@@ -1,47 +1,35 @@
 /**
  * AI 服务层
- * 1. analyzeFrenchText: 分析整篇文章
+ * 1. analyzeFrenchText: 分析整篇文章 (逐句拆解版)
  * 2. explainWordInContext: 解释单词并重构完美例句
  */
 
-// --- 1. 分析整篇文章 ---
+// --- 1. 分析整篇文章 (升级版：逐句精读) ---
 export const analyzeFrenchText = async (text, apiKey, baseUrl = "https://api.deepseek.com") => {
     const prompt = `
-      你是一位资深的法语语言学家。请深度分析下面的法语文本，为A1水平的法语初学者制作教材。
-      
-      文本内容：
+      你是一位法语私教。请处理这篇法语文本：
       "${text}"
   
-      请严格按照以下 JSON 格式返回数据（纯文本格式，不要使用 Markdown 代码块，不要带 json 标记）：
+      任务要求：
+      1. 【自动分句】：文本可能没有标点，请根据语义将其拆分为自然的句子。
+      2. 【逐句解析】：对拆分后的每一句话进行分析（翻译+语法）。
+      3. 【处理范围】：请尽量处理全文；如果文本过长（超过2000词），请只精读前30个核心句子。
+  
+      请严格返回以下 JSON 格式（纯文本，不要 Markdown）：
       {
-        "summary": "中文一句话摘要",
-        "level": "CEFR等级 (例如: A2, B1)",
-        "keywords": [
+        "title": "给这篇文章起个法语标题",
+        "summary": "中文摘要",
+        "level": "难度等级 (A1-C2)",
+        "sentences": [
           {
-            "word": "原型词(带阴阳性,如 le livre)", 
-            "meaning": "中文释义", 
-            "context": "原文中出现的完整句子",
-            "ipa": "IPA音标(可选)"
-          }
-        ],
-        "grammar_notes": [
-          {
-            "point": "语法点名称 (例如: 虚拟式现在时)",
-            "explanation": "简短解释为什么这里用了这个语法",
-            "example": "原文例句或自造简单例句"
-          }
-        ],
-        "sentence_patterns": [
-          {
-            "pattern": "核心句型结构 (例如: Il est nécessaire que + subj)",
-            "explanation": "中文解释用法",
-            "example": "给出一个典型的例句"
+            "original": "法语原句 (请修复大小写和标点)",
+            "trans": "中文翻译",
+            "grammar": "简短的语法点或重点词汇解释 (如果没有特殊点，留空)"
           }
         ]
       }
     `;
   
-    // 兼容硅基流动
     const isSiliconFlow = baseUrl.includes("siliconflow");
     const modelName = isSiliconFlow ? "deepseek-ai/DeepSeek-V3" : "deepseek-chat";
   
@@ -55,7 +43,7 @@ export const analyzeFrenchText = async (text, apiKey, baseUrl = "https://api.dee
         body: JSON.stringify({
           model: modelName,
           messages: [{ role: "user", content: prompt }],
-          temperature: 0.3,
+          temperature: 0.2, // 低温更严谨
           response_format: { type: "json_object" }
         })
       });
@@ -70,7 +58,7 @@ export const analyzeFrenchText = async (text, apiKey, baseUrl = "https://api.dee
         return JSON.parse(content);
       } catch (parseError) {
         console.error("JSON 解析失败:", content);
-        throw new Error("AI 数据格式错误，请重试");
+        throw new Error("AI 返回格式有误，请重试");
       }
   
     } catch (error) {
@@ -96,7 +84,7 @@ export const analyzeFrenchText = async (text, apiKey, baseUrl = "https://api.dee
         "pronunciation": "IPA音标",
         "grammar_type": "词性(如: n.m.)",
         "note": "简短用法提示",
-        "perfect_sentence": "修复后的完整法语句子 (例如: Je vois une voiture.)"
+        "perfect_sentence": "修复后的完整法语句子"
       }
     `;
   

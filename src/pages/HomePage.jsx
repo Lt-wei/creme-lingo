@@ -15,6 +15,7 @@ const HomePage = () => {
   const [newText, setNewText] = useState('');
   const [newTitle, setNewTitle] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [statusMsg, setStatusMsg] = useState('AI 正在备课中...');
 
   useEffect(() => {
     refreshData();
@@ -28,7 +29,7 @@ const HomePage = () => {
   };
 
   const handleDelete = (e, id) => {
-    e.preventDefault(); // 防止触发 Link 跳转
+    e.preventDefault(); 
     if (window.confirm('确定要删除这篇文章吗？')) {
       const updatedLessons = lessons.filter(l => l.id !== id);
       setLessons(updatedLessons);
@@ -46,17 +47,44 @@ const HomePage = () => {
     }
 
     setIsProcessing(true);
-    const title = newTitle.trim() || `Lesson ${lessons.length + 1}`;
     
     try {
+      let textToAnalyze = newText;
+      let lessonTitle = newTitle;
+
+      // 📺 1. 检查是否为 YouTube 链接
+      if (newText.includes('youtube.com') || newText.includes('youtu.be')) {
+        setStatusMsg("正在提取 YouTube 字幕...");
+        
+        const transcriptRes = await fetch('/api/transcript', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: newText })
+        });
+
+        if (!transcriptRes.ok) throw new Error("字幕提取失败 (请确认视频有法语 CC 字幕)");
+        
+        const transcriptData = await transcriptRes.json();
+        textToAnalyze = transcriptData.text;
+        
+        if (!lessonTitle) lessonTitle = "YouTube 视频学习";
+      }
+
+      // 🧠 2. AI 分析
+      setStatusMsg("AI 正在逐句解析...");
       const baseUrl = localStorage.getItem('ai_baseUrl');
-      const analysis = await analyzeFrenchText(newText, apiKey, baseUrl);
+      const analysis = await analyzeFrenchText(textToAnalyze, apiKey, baseUrl);
       
+      // 使用 AI 建议的标题
+      if (analysis.title && (!newTitle || newTitle === "YouTube 视频学习")) {
+        lessonTitle = analysis.title;
+      }
+
       const newLesson = {
         id: Date.now(),
-        title: title,
-        text: newText,
-        analysis: analysis, // 确保 AI 数据存入
+        title: lessonTitle.trim() || `Lesson ${lessons.length + 1}`,
+        text: textToAnalyze,
+        analysis: analysis, 
         date: new Date().toLocaleDateString('fr-FR')
       };
 
@@ -68,9 +96,10 @@ const HomePage = () => {
       setNewTitle('');
       setShowAddModal(false);
     } catch (error) {
-      alert("生成失败: " + error.message);
+      alert("处理失败: " + error.message);
     } finally {
       setIsProcessing(false);
+      setStatusMsg("AI 正在备课中...");
     }
   };
 
@@ -83,7 +112,6 @@ const HomePage = () => {
         </Link>
       </div>
 
-      {/* 🟢 新增：生词本入口卡片 */}
       <Link to="/review">
         <CreamCard className="mb-6 !bg-cream-accent/20 border-cream-accent/50 flex justify-between items-center group cursor-pointer">
           <div className="flex items-center gap-4">
@@ -95,9 +123,7 @@ const HomePage = () => {
               <p className="text-xs text-cream-text/60">共积累 {vocabCount} 个单词</p>
             </div>
           </div>
-          <div className="text-cream-text/40 group-hover:translate-x-1 transition-transform">
-             👉
-          </div>
+          <div className="text-cream-text/40 group-hover:translate-x-1 transition-transform">👉</div>
         </CreamCard>
       </Link>
       
@@ -105,7 +131,7 @@ const HomePage = () => {
       <div className="space-y-4 pb-20">
         {lessons.length === 0 ? (
            <CreamCard className="text-center py-10 text-cream-text/50">
-             点击右下角 "+" <br/>开始你的第一堂课
+             点击右下角 "+" <br/>粘贴文本或 YouTube 链接
            </CreamCard>
         ) : (
           lessons.map(lesson => (
@@ -120,7 +146,6 @@ const HomePage = () => {
                     {lesson.analysis?.level || 'Raw'} • {lesson.date}
                   </p>
                 </div>
-                {/* 🔴 新增：删除按钮 */}
                 <button 
                   onClick={(e) => handleDelete(e, lesson.id)}
                   className="p-2 text-cream-text/20 hover:text-red-400 transition-colors z-20"
@@ -140,15 +165,13 @@ const HomePage = () => {
         <Plus size={32} />
       </button>
 
-      {/* 模态框保持不变 */}
       {showAddModal && (
         <div className="fixed inset-0 bg-black/20 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <CreamCard className="w-full max-w-md !p-6 relative animate-in zoom-in-95 duration-200">
             {isProcessing && (
               <div className="absolute inset-0 bg-white/90 backdrop-blur-sm z-10 rounded-xl-card flex flex-col items-center justify-center text-cream-text">
                 <Loader2 size={40} className="animate-spin mb-2" />
-                <p className="font-bold animate-pulse">AI 正在备课中...</p>
-                <p className="text-xs text-cream-text/50 mt-2">分析句型 / 提取生词 / 评估等级</p>
+                <p className="font-bold animate-pulse">{statusMsg}</p>
               </div>
             )}
 
@@ -158,13 +181,13 @@ const HomePage = () => {
             </div>
             <input
               type="text"
-              placeholder="标题 (例如: 小王子第一章)"
+              placeholder="标题 (可选，留空则自动生成)"
               value={newTitle}
               onChange={(e) => setNewTitle(e.target.value)}
               className="w-full mb-4 p-3 bg-cream-bg rounded-xl outline-none focus:ring-2 focus:ring-cream-accent/50"
             />
             <textarea
-              placeholder="请粘贴法语文本..."
+              placeholder="粘贴法语文本，或者 YouTube 视频链接..."
               value={newText}
               onChange={(e) => setNewText(e.target.value)}
               className="w-full h-48 p-3 bg-cream-bg rounded-xl outline-none resize-none mb-4 focus:ring-2 focus:ring-cream-accent/50"
