@@ -1,8 +1,6 @@
-// 这是一个运行在云端的 Serverless 函数
 import { YoutubeTranscript } from 'youtube-transcript';
 
 export default async function handler(req, res) {
-  // 设置 CORS 头，允许你的网页访问这个 API
   res.setHeader('Access-Control-Allow-Credentials', true);
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
@@ -13,22 +11,42 @@ export default async function handler(req, res) {
     return;
   }
 
-  const { url } = req.body;
-
-  if (!url) {
-    return res.status(400).json({ error: 'Missing YouTube URL' });
-  }
-
   try {
-    // 抓取字幕
-    const transcriptItems = await YoutubeTranscript.fetchTranscript(url, { lang: 'fr' });
-    
-    // 把碎片字幕拼接成完整的文章
+    const { url } = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+
+    if (!url) return res.status(400).json({ error: '缺少 YouTube URL' });
+
+    let transcriptItems = [];
+
+    // 🕵️‍♀️ 智能抓取策略：三步走
+    try {
+      // 1. 优先尝试找“标准法语”
+      transcriptItems = await YoutubeTranscript.fetchTranscript(url, { lang: 'fr' });
+    } catch (e1) {
+      try {
+        // 2. 如果没找到，尝试找“法国法语” (fr-FR)
+        transcriptItems = await YoutubeTranscript.fetchTranscript(url, { lang: 'fr-FR' });
+      } catch (e2) {
+        try {
+           // 3. 还没找到？那就抓“默认字幕”（通常是自动生成的法语，或者是发布者设置的主语言）
+           // 这一步是兜底，能解决绝大多数“报错”问题
+           const list = await YoutubeTranscript.fetchTranscript(url);
+           transcriptItems = list;
+        } catch (e3) {
+           throw new Error("无法提取字幕");
+        }
+      }
+    }
+
+    // 拼接文本
     const fullText = transcriptItems.map(item => item.text).join(' ');
     
     return res.status(200).json({ text: fullText });
+
   } catch (error) {
     console.error('Transcript Error:', error);
-    return res.status(500).json({ error: '无法提取字幕，请确认视频有法语字幕 (CC)' });
+    return res.status(500).json({ 
+      error: '无法提取 CC 字幕。请注意：APP 无法读取视频画面上的硬字幕，只能读取 YouTube 自带的 CC 字幕。' 
+    });
   }
 }
