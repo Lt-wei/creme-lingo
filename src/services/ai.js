@@ -1,21 +1,14 @@
 /**
- * AI 服务层
- * 1. analyzeFrenchText: 全文逐句精读 (Chunking 模式)
- * 2. explainWordInContext: 单词查询
+ * AI 服务层 (支持 DeepSeek / 硅基流动 / 通义千问)
  */
 
 // ⚡️ 辅助函数：带超时的 Fetch
 const fetchWithTimeout = async (resource, options = {}) => {
-    const { timeout = 40000 } = options; // 放宽到 40 秒
-    
+    const { timeout = 40000 } = options;
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), timeout);
-    
     try {
-      const response = await fetch(resource, {
-        ...options,
-        signal: controller.signal  
-      });
+      const response = await fetch(resource, { ...options, signal: controller.signal });
       clearTimeout(id);
       return response;
     } catch (error) {
@@ -24,22 +17,26 @@ const fetchWithTimeout = async (resource, options = {}) => {
     }
   };
   
-  // --- 1. 分析整篇文章 (重点短语模式) ---
+  // 🧠 智能模型选择器
+  const getModelName = (baseUrl) => {
+    if (baseUrl.includes("siliconflow")) {
+      return "deepseek-ai/DeepSeek-V3"; // 硅基流动
+    } else if (baseUrl.includes("aliyuncs")) {
+      return "qwen-max"; // 👈 阿里云通义千问 (qwen-max 是最强版，也可以改 qwen-plus)
+    } else {
+      return "deepseek-chat"; // 默认 DeepSeek 官方
+    }
+  };
+  
+  // --- 1. 分析整篇文章 ---
   export const analyzeFrenchText = async (text, apiKey, baseUrl = "https://api.deepseek.com") => {
     const prompt = `
       你是一位法语私教。请将文本拆解为教材。
-      
-      文本：
-      "${text}"
-  
+      文本："${text}"
       任务：
       1. 【拆句】：按语义拆分句子。
-      2. 【划重点】：不要罗列每个单词！只提取**有学习价值**的“语块”(Chunks)。
-         - 组合词/短语：如 "tout le monde" (不要拆开)。
-         - 时态结构：如 "on va présenter" (近将来时)。
-         - 难词/变位：如 "viennent" (venir 变位)。
-         - 连诵/发音：如 "vous_allez" (连读)。
-  
+      2. 【划重点】：只提取**有学习价值**的“语块”(Chunks)，如固定搭配、时态结构、连诵、难词。
+      
       请严格返回 JSON (纯文本)：
       {
         "title": "标题",
@@ -49,29 +46,14 @@ const fetchWithTimeout = async (resource, options = {}) => {
             "original": "法语原句",
             "trans": "中文翻译",
             "points": [
-               { 
-                 "chunk": "on va vous présenter", 
-                 "type": "语法", 
-                 "desc": "近将来时 (aller + infinitive)，表示'我们将要向您介绍'" 
-               },
-               { 
-                 "chunk": "les plus populaires", 
-                 "type": "词汇", 
-                 "desc": "最高级结构，'最受欢迎的'" 
-               },
-               { 
-                 "chunk": "snack", 
-                 "type": "发音", 
-                 "desc": "注意 ck 发音 /k/，这是外来词" 
-               }
+               { "chunk": "短语", "type": "语法/词汇/发音", "desc": "解释" }
             ]
           }
         ]
       }
     `;
   
-    const isSiliconFlow = baseUrl.includes("siliconflow");
-    const modelName = isSiliconFlow ? "deepseek-ai/DeepSeek-V3" : "deepseek-chat";
+    const modelName = getModelName(baseUrl);
   
     try {
       const response = await fetchWithTimeout(`${baseUrl}/v1/chat/completions`, {
@@ -97,17 +79,16 @@ const fetchWithTimeout = async (resource, options = {}) => {
   
       return JSON.parse(content);
     } catch (error) {
-      if (error.name === 'AbortError') throw new Error("AI 思考超时，请重试");
+      if (error.name === 'AbortError') throw new Error("AI 响应超时");
       throw error;
     }
   };
   
-  // --- 2. 单词查询 (保持不变) ---
+  // --- 2. 单词查询 ---
   export const explainWordInContext = async (word, roughContext, apiKey, baseUrl = "https://api.deepseek.com") => {
     const prompt = `
       语境："...${roughContext}..."
       单词： "${word}"。
-      
       请返回 JSON：
       {
         "meaning": "中文释义",
@@ -118,8 +99,7 @@ const fetchWithTimeout = async (resource, options = {}) => {
       }
     `;
   
-    const isSiliconFlow = baseUrl.includes("siliconflow");
-    const modelName = isSiliconFlow ? "deepseek-ai/DeepSeek-V3" : "deepseek-chat";
+    const modelName = getModelName(baseUrl);
   
     try {
       const response = await fetchWithTimeout(`${baseUrl}/v1/chat/completions`, {
