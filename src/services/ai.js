@@ -1,24 +1,44 @@
 /**
  * AI 服务层
- * 1. analyzeFrenchText: 分析整篇文章 (逐句精读 - 教授版)
- * 2. explainWordInContext: 解释单词并重构完美例句
+ * 1. analyzeFrenchText: 全文逐句逐词精读
+ * 2. explainWordInContext: 单词查询 (带超时控制)
  */
 
-// --- 1. 分析整篇文章 (升级版：逐句精讲) ---
-export const analyzeFrenchText = async (text, apiKey, baseUrl = "https://api.deepseek.com") => {
+// ⚡️ 辅助函数：带超时的 Fetch
+const fetchWithTimeout = async (resource, options = {}) => {
+    const { timeout = 20000 } = options; // 默认 20 秒超时
+    
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), timeout);
+    
+    try {
+      const response = await fetch(resource, {
+        ...options,
+        signal: controller.signal  
+      });
+      clearTimeout(id);
+      return response;
+    } catch (error) {
+      clearTimeout(id);
+      throw error;
+    }
+  };
+  
+  // --- 1. 分析整篇文章 (显微镜模式：逐词解析) ---
+  export const analyzeFrenchText = async (text, apiKey, baseUrl = "https://api.deepseek.com") => {
     const prompt = `
-      你是一位对细节要求极高的法语语言学教授。请将下面的文本拆解成“逐句精读教材”。
+      你是一位对细节极其苛刻的法语语言学家。请将下面的文本拆解成“逐词精读教材”。
       
       文本内容：
       "${text}"
   
       任务要求：
       1. 【拆分】：按语义拆分成完整的句子。
-      2. 【深挖】：对于每一句话，不要只给翻译！必须提供以下深度的教学笔记（如果没有值得讲的点，就挖掘动词变位或发音）：
-         - 语法分析：时态（如：近将来时）、句式结构（如：est-ce que）、代词用法。
-         - 核心词汇：列出句中动词的原形（如：viennent -> venir）、形容词的阴阳性。
-         - 发音提示：指出关键的联诵（Liaison，如：vous_allez）或特殊发音。
-         - 文化/语体：是口语还是书面语？有什么地道表达？
+      2. 【显微镜式拆解】：对于每一句话，除了翻译，必须提供 `tokens` 数组，将句中所有**实词**和**短语**拆解出来。
+      3. 【拆解标准】：
+         - 动词：必须给出原形 (Infinitif) 和时态。
+         - 代词/冠词：简单标注即可。
+         - 短语：如果是固定搭配 (如 "est-ce que"), 请作为一个整体解释。
   
       请严格返回以下 JSON 格式（纯文本）：
       {
@@ -28,24 +48,23 @@ export const analyzeFrenchText = async (text, apiKey, baseUrl = "https://api.dee
         "sentences": [
           {
             "original": "法语原句",
-            "trans": "中文地道翻译",
-            "notes": [
-               "语法: 解释这里的时态或结构...",
-               "词汇: xxx -> 原形是 yyy",
-               "发音: 注意这里的连诵...",
-               "文化: 这是非常口语化的说法..."
-            ]
+            "trans": "中文翻译",
+            "tokens": [
+               { "w": "bonjour", "m": "你好", "t": "阳性名词" },
+               { "w": "les amis", "m": "朋友们", "t": "复数" },
+               { "w": "bienvenue", "m": "欢迎", "t": "阴性名词" }
+            ],
+            "grammar": "这里写整句的特殊语法点或文化背景（可选）"
           }
         ]
       }
     `;
   
-    // 兼容硅基流动
     const isSiliconFlow = baseUrl.includes("siliconflow");
     const modelName = isSiliconFlow ? "deepseek-ai/DeepSeek-V3" : "deepseek-chat";
   
     try {
-      const response = await fetch(`${baseUrl}/v1/chat/completions`, {
+      const response = await fetchWithTimeout(`${baseUrl}/v1/chat/completions`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -54,9 +73,10 @@ export const analyzeFrenchText = async (text, apiKey, baseUrl = "https://api.dee
         body: JSON.stringify({
           model: modelName,
           messages: [{ role: "user", content: prompt }],
-          temperature: 0.2, // 低温更严谨
+          temperature: 0.1, // 温度降到最低，追求绝对精确
           response_format: { type: "json_object" }
-        })
+        }),
+        timeout: 60000 // 全文分析允许 60 秒
       });
   
       const data = await response.json();
@@ -69,33 +89,30 @@ export const analyzeFrenchText = async (text, apiKey, baseUrl = "https://api.dee
         return JSON.parse(content);
       } catch (parseError) {
         console.error("JSON 解析失败:", content);
-        throw new Error("AI 返回格式有误，请重试");
+        throw new Error("AI 数据格式错误，请重试");
       }
   
     } catch (error) {
-      console.error("AI Analysis Failed:", error);
+      if (error.name === 'AbortError') {
+        throw new Error("AI 思考超时，请检查网络或重试");
+      }
       throw error;
     }
   };
   
-  // --- 2. 查询单词 (保持不变，但为了防止你弄丢，这里也完整贴出) ---
+  // --- 2. 查询单词 (增加超时保护) ---
   export const explainWordInContext = async (word, roughContext, apiKey, baseUrl = "https://api.deepseek.com") => {
     const prompt = `
-      我有一段没有标点符号的法语文本片段（粗糙语境）："...${roughContext}..."
-      用户点击了其中的单词 "${word}"。
+      语境："...${roughContext}..."
+      单词： "${word}"。
       
-      请做两件事：
-      1. 【还原句子】根据语义，从片段中精准提取包含 "${word}" 的那一句话（完整的句子）。
-      2. 【修复标点】为这句话加上正确的标点符号（大小写、句号等），使其成为标准的法语句子。
-      3. 【解释单词】解释该单词的含义。
-  
-      请返回纯 JSON 格式：
+      请返回纯 JSON 格式（不要Markdown）：
       {
-        "meaning": "简练的中文释义",
+        "meaning": "简练中文释义",
         "pronunciation": "IPA音标",
         "grammar_type": "词性(如: n.m.)",
-        "note": "简短用法提示",
-        "perfect_sentence": "修复后的完整法语句子"
+        "note": "用法提示",
+        "perfect_sentence": "根据语境还原的完整标准法语句子"
       }
     `;
   
@@ -103,7 +120,7 @@ export const analyzeFrenchText = async (text, apiKey, baseUrl = "https://api.dee
     const modelName = isSiliconFlow ? "deepseek-ai/DeepSeek-V3" : "deepseek-chat";
   
     try {
-      const response = await fetch(`${baseUrl}/v1/chat/completions`, {
+      const response = await fetchWithTimeout(`${baseUrl}/v1/chat/completions`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -114,7 +131,8 @@ export const analyzeFrenchText = async (text, apiKey, baseUrl = "https://api.dee
           messages: [{ role: "user", content: prompt }],
           temperature: 0.3,
           response_format: { type: "json_object" }
-        })
+        }),
+        timeout: 15000 // 单词查询超过 15 秒就报错，防止无限转圈
       });
   
       const data = await response.json();
@@ -126,6 +144,7 @@ export const analyzeFrenchText = async (text, apiKey, baseUrl = "https://api.dee
       return JSON.parse(content);
     } catch (error) {
       console.error("Word Analysis Failed:", error);
+      // 返回 null 让前端处理错误，而不是抛出异常炸掉页面
       return null;
     }
   };

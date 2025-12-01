@@ -46,25 +46,28 @@ const ReaderPage = () => {
 
     setSelectedWordObj({ word: cleanWord, index });
     setWordData(null);
-    setIsLoadingWord(true);
+    setIsLoadingWord(true); // 开始转圈
 
     const apiKey = localStorage.getItem('ai_apiKey');
     
     if (apiKey) {
+      // explainWordInContext 现在内部有超时控制，且出错会返回 null
       const result = await explainWordInContext(cleanWord, roughContext, apiKey, localStorage.getItem('ai_baseUrl'));
+      
       if (result) {
         setWordData({ 
           ...result, 
           contextSentence: result.perfect_sentence 
         });
       } else {
-        setWordData({ meaning: "分析失败", contextSentence: "..." + roughContext.slice(0, 50) + "..." });
+        // 如果返回 null (超时或错误)，手动设置错误信息
+        setWordData({ meaning: "网络超时/查询失败", contextSentence: "请检查网络或重试" });
       }
     } else {
-      setWordData({ meaning: "请配置 API Key", contextSentence: "..." + roughContext.slice(0, 50) + "..." });
+      setWordData({ meaning: "请配置 API Key", contextSentence: "..." });
     }
     
-    setIsLoadingWord(false);
+    setIsLoadingWord(false); // 停止转圈 (无论成功失败)
   };
 
   const addToVocab = () => {
@@ -119,14 +122,6 @@ const ReaderPage = () => {
   const isCollected = savedVocab.some(v => v.word === selectedWordObj?.word);
   const isSmartMode = lesson.analysis && lesson.analysis.sentences;
 
-  // 辅助函数：根据笔记类型给颜色
-  const getNoteColor = (text) => {
-    if (text.includes("语法")) return "bg-blue-50 text-blue-600 border-blue-100";
-    if (text.includes("发音") || text.includes("连诵")) return "bg-purple-50 text-purple-600 border-purple-100";
-    if (text.includes("词汇") || text.includes("变位")) return "bg-green-50 text-green-600 border-green-100";
-    return "bg-gray-50 text-gray-500 border-gray-100";
-  };
-
   return (
     <Layout>
       <div className="flex items-center gap-4 mb-6">
@@ -156,9 +151,9 @@ const ReaderPage = () => {
             </button>
           </CreamCard>
 
-          {/* 🟢 逐句精讲列表 (升级版) */}
+          {/* 🟢 逐句显微镜列表 */}
           {lesson.analysis.sentences.map((sent, idx) => (
-            <div key={idx} className="relative pl-4 border-l-2 border-cream-accent/30 hover:border-cream-accent transition-colors py-3">
+            <div key={idx} className="relative pl-4 border-l-2 border-cream-accent/30 hover:border-cream-accent transition-colors py-4">
               
               {/* 原句 */}
               <div className="text-lg leading-relaxed text-justify mb-2 font-serif text-cream-text">
@@ -182,29 +177,30 @@ const ReaderPage = () => {
               </div>
 
               {/* 翻译 */}
-              <p className="text-sm font-medium text-cream-text/80 mb-3">
+              <p className="text-sm font-medium text-cream-text/80 mb-4">
                 {sent.trans}
               </p>
 
-              {/* 🟢 笔记胶囊区 (显示多条笔记) */}
-              {sent.notes && sent.notes.length > 0 ? (
-                <div className="flex flex-wrap gap-2">
-                  {sent.notes.map((note, nIdx) => (
-                    <div 
-                      key={nIdx} 
-                      className={`text-xs px-2 py-1 rounded border ${getNoteColor(note)}`}
-                    >
-                      {note}
+              {/* 🟢 词汇显微镜 (Tokens Grid) */}
+              {sent.tokens && sent.tokens.length > 0 ? (
+                <div className="bg-white/50 rounded-xl p-3 grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {sent.tokens.map((token, tIdx) => (
+                    <div key={tIdx} className="flex flex-col">
+                      <div className="flex items-baseline gap-1">
+                        <span className="font-bold text-cream-text text-sm">{token.w}</span>
+                        <span className="text-[10px] text-cream-text/40">{token.t}</span>
+                      </div>
+                      <span className="text-xs text-cream-text/70">{token.m}</span>
                     </div>
                   ))}
                 </div>
-              ) : (
-                /* 兼容旧版单一 grammar 字段 */
-                sent.grammar && (
-                  <div className="text-xs bg-white/60 p-1.5 rounded mt-1 text-cream-text/50 italic inline-block">
-                    💡 {sent.grammar}
-                  </div>
-                )
+              ) : null}
+
+              {/* 语法补充 (如果有) */}
+              {sent.grammar && (
+                <div className="mt-3 text-xs bg-blue-50 text-blue-600 border border-blue-100 p-2 rounded inline-block">
+                  💡 {sent.grammar}
+                </div>
               )}
             </div>
           ))}
@@ -219,7 +215,7 @@ const ReaderPage = () => {
                 className="px-4 py-2 bg-cream-accent/20 text-cream-text rounded-lg font-bold text-sm flex items-center justify-center gap-2 mx-auto"
               >
                 {isRegenerating ? <Loader2 className="animate-spin" size={16}/> : <RefreshCw size={16}/>}
-                升级为精读教材
+                升级为逐词解析模式
               </button>
            </div>
            <div className="text-lg leading-loose text-justify font-serif">
@@ -246,7 +242,7 @@ const ReaderPage = () => {
             <div className="p-4 bg-white/80 backdrop-blur-xl min-h-[120px]">
               {isLoadingWord ? (
                 <div className="flex items-center justify-center py-4 text-cream-text/50 gap-2">
-                  <Loader2 className="animate-spin" size={20} /> 正在深度解析...
+                  <Loader2 className="animate-spin" size={20} /> 正在智能解析...
                 </div>
               ) : wordData ? (
                 <div>
